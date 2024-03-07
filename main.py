@@ -2,50 +2,58 @@
 # -*- coding: utf-8 -*-
 
 import os
+import sys
+import math
 
-from PyQt5.QtCore import Qt, QPoint, QRect
-from PyQt5.QtGui import QImage, QPixmap, QPalette, QPainter, QGuiApplication
-from PyQt5.QtWidgets import QLabel, QSizePolicy, QScrollArea, QMessageBox, QMainWindow, QMenu, QAction, \
-    qApp, QFileDialog, QDesktopWidget, QStyle, QToolBar, QPushButton
+import cv2
+import numpy as np
+from sana.image import Frame
+from PIL import Image
+from PIL.ImageQt import ImageQt
 
+from PyQt6.QtCore import Qt, QPoint, QPointF, QRect, QRectF
+from PyQt6.QtGui import QImage, QPixmap, QPalette, QPainter, QGuiApplication, QTransform, QAction
+from PyQt6.QtWidgets import QLabel, QSizePolicy, QScrollArea, QMessageBox, QMainWindow, QMenu, QFileDialog, QStyle, QToolBar, QPushButton, QDockWidget, QDial, QLineEdit, QWidget, QVBoxLayout, QSpinBox, QApplication
 
 class ImageViewer(QMainWindow):
     def __init__(self):
         super().__init__()
 
         # TODO: this might be off by a pixel?
-        self.SCROLLBAR_EXTENT = qApp.style().pixelMetric(QStyle.PM_ScrollBarExtent)
+        self.SCROLLBAR_EXTENT = QApplication.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
         # self.SCROLLBAR_WIDTH = self.SCROLLBAR_EXTENT + self.scroll_area.width() - self.scrollAreaWidgetContents.width()
         # self.SCROLLBAR_EXTENT += self.scroll_area.width() - ui->scrollAreaWidgetContents->width();
-        self.TITLEBAR_HEIGHT = qApp.style().pixelMetric(QStyle.PM_TitleBarHeight)
+        self.TITLEBAR_HEIGHT = QApplication.style().pixelMetric(QStyle.PixelMetric.PM_TitleBarHeight)
 
         self.DESKTOP_RECT = QApplication.primaryScreen().availableGeometry()
         self.DESKTOP_HEIGHT = self.DESKTOP_RECT.height()
         self.DESKTOP_WIDTH = self.DESKTOP_RECT.width()
 
         self.scale_factor = 1.0
+        self.rotation_angle = 0
 
         self.image_label = QLabel()
-        self.image_label.setBackgroundRole(QPalette.Base)
-        self.image_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self.image_label.setBackgroundRole(QPalette.ColorRole.Base)
+        self.image_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self.image_label.setScaledContents(True)
 
         self.scroll_area = QScrollArea()
-        self.scroll_area.setBackgroundRole(QPalette.Dark)
+        # self.scroll_area.setBackgroundRole(QPalette.Dark)
         self.scroll_area.setWidget(self.image_label)
         self.scroll_area.setVisible(False)
-        self.scroll_area.setAlignment(Qt.AlignVCenter | Qt.AlignHCenter)
+        self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignHCenter)
 
         self.setCentralWidget(self.scroll_area)
 
+        self.create_navigation_toolbar()
+        self.create_rotation_dock()
         self.create_actions()
         self.create_menus()
-        self.create_toolbars()
 
         self.setWindowTitle("Image Viewer")
         self.resize(800, 600)
 
-        self.open_frame('../testing/test_segment_output/2010-011-36F_N_V1_GFAP_4K_07-13-22_PS/GM_VEC_0/2010-011-36F_N_V1_GFAP_4K_07-13-22_PS.png')
+        self.open_frame('../sana/testing/test_segment_output/2010-011-36F_N_V1_GFAP_4K_07-13-22_PS/GM_VEC_0/2010-011-36F_N_V1_GFAP_4K_07-13-22_PS.png')
 
     def set_viewer_size(self, size):
         self.resize(size)
@@ -56,8 +64,9 @@ class ImageViewer(QMainWindow):
             file_name, _ = QFileDialog.getOpenFileName(self, 'QFileDialog.getOpenFileName()', '',
                                                     'Images (*.png *.jpeg *.jpg *.bmp *.gif)', options=options)
         if file_name:
-            image = QImage(file_name)
-            if image.isNull():
+            try:
+                image_array = np.asarray(Image.open(file_name))
+            except:
                 QMessageBox.information(self, "Image Viewer", "Cannot load %s." % file_name)
                 return
 
@@ -68,8 +77,9 @@ class ImageViewer(QMainWindow):
         self.data_directory, self.slide_name = os.path.split(self.slide_directory)
 
         # update the necessary widgets
-        self.set_source_image(image)
+        self.set_source_image(image_array)
         self.update_navigation_toolbar()
+        self.update_rotation_dock()
 
     def get_next_frame(self):
 
@@ -162,18 +172,66 @@ class ImageViewer(QMainWindow):
             file_name = os.path.join(self.data_directory, self.next_slide_name, self.next_roi_name, self.next_slide_name+'.png')
             self.open_frame(file_name)      
                  
-    def set_source_image(self, image: QImage):
-        self.source_image = image
+    def set_source_image(self, image_array: np.ndarray):
+        self.source_image_array = image_array
+
+        self.source_image = QImage(
+            self.source_image_array, 
+            self.source_image_array.shape[1], 
+            self.source_image_array.shape[0],
+            self.source_image_array.strides[0],
+            QImage.Format.Format_RGB888
+        )
 
         # calculate aspect ratio of the source image
         self.aspect_ratio = self.source_image.height() / self.source_image.width()
 
         # initialize the window with the source image
-        self.set_image_label(self.source_image)
+        self.set_rotated_image(self.source_image_array)
+        self.set_rescaled_image(self.source_image_array)
+        self.set_current_image(self.source_image_array)
 
-    def set_image_label(self, image: QImage):
-        self.current_image = image
-        self.image_label.setPixmap(QPixmap.fromImage(self.current_image))
+    def set_rotated_image(self, image_array: np.ndarray):
+        self.rotated_image_array = image_array      
+
+        self.rotated_image = QImage(
+            self.rotated_image_array, 
+            self.rotated_image_array.shape[1], 
+            self.rotated_image_array.shape[0],
+            self.rotated_image_array.strides[0],
+            QImage.Format.Format_RGB888
+        )
+
+        rescaled_image_array = self.rescale_image(self.rotated_image_array, self.scale_factor)
+
+        self.set_rescaled_image(rescaled_image_array)
+
+    def set_rescaled_image(self, image_array: np.ndarray):
+        self.rescaled_image_array = image_array
+
+        self.rescaled_image = QImage(
+            self.rescaled_image_array, 
+            self.rescaled_image_array.shape[1], 
+            self.rescaled_image_array.shape[0],
+            self.rescaled_image_array.strides[0],
+            QImage.Format.Format_RGB888,
+        )
+
+        self.set_current_image(self.rescaled_image_array)
+
+    def set_current_image(self, image_array: np.ndarray):
+        self.current_image_array = image_array
+
+        self.current_image = QImage(
+            self.current_image_array, 
+            self.current_image_array.shape[1], 
+            self.current_image_array.shape[0],
+            self.current_image_array.strides[0],
+            QImage.Format.Format_RGB888
+        )
+
+        self.current_pixmap = QPixmap.fromImage(self.current_image)
+        self.image_label.setPixmap(self.current_pixmap)
 
         # show the scroll area if needed
         self.scroll_area.setVisible(True)
@@ -181,6 +239,20 @@ class ImageViewer(QMainWindow):
         # update the size of the image label
         self.image_label.adjustSize()
         
+    def rescale_image(self, image_array: np.ndarray, scale_factor: float):
+        h = int(round(scale_factor * image_array.shape[0]))
+        w = int(round(scale_factor * image_array.shape[1]))
+        rescaled_image_array = cv2.resize(image_array, dsize=(w, h), interpolation=cv2.INTER_CUBIC)
+
+        return rescaled_image_array
+
+    def rotate_image(self, image_array: np.ndarray, angle: int):
+
+        frame = Frame(image_array)
+        frame.rotate(-angle)
+        rotated_image_array = frame.img
+
+        return rotated_image_array
 
     def save_frame(self, file_name=""):
         if file_name == "" or file_name == False:
@@ -211,10 +283,10 @@ class ImageViewer(QMainWindow):
     def set_scale_factor(self, scale_factor):
         self.scale_factor = scale_factor
 
-        # rescale the image by the factor
-        image = self.source_image.scaled(self.scale_factor * self.source_image.size())
-        self.set_image_label(image)
-        
+        rescaled_image_array = self.rescale_image(self.rotated_image_array, self.scale_factor)
+
+        self.set_rescaled_image(rescaled_image_array)
+
     # update the scale factor by 25%, update the scroll bar values so that they do not move
     def zoom_in(self):
         self.set_scale_factor(self.scale_factor * 1.25)
@@ -270,23 +342,13 @@ class ImageViewer(QMainWindow):
         scroll_bar.setValue(int(factor * scroll_bar.value()
                                + ((factor - 1) * scroll_bar.pageStep() / 2)))
         
-    def update_navigation_toolbar(self):
 
-        # get the previous and next roi in the dataset
-        self.previous_slide_name, self.previous_roi_name = self.get_previous_frame()
-        self.next_slide_name, self.next_roi_name = self.get_next_frame()
+    def set_image_rotation(self, angle):
+        self.rotation_angle = angle - 180
+        
+        rotated_image_array = self.rotate_image(self.source_image_array, self.rotation_angle)
 
-        if self.previous_roi_name != "":
-            self.previous_button.setText(f'{self.previous_slide_name}\n{self.previous_roi_name}')
-        else:
-            self.previous_button.setText("End of\nDataset")
-        self.current_label.setText(f'{self.slide_name}\n{self.roi_name}')
-        if self.next_roi_name != "":
-            self.next_button.setText(f'{self.next_slide_name}\n{self.next_roi_name}')
-        else:
-            self.next_button.setText("End of\nDataset")
-
-        self.navigation_toolbar.show()
+        self.set_rotated_image(rotated_image_array)
 
     # functions which see if the image dimensions surpass the MainWindow dimensions
     def horizontal_scroll_bar_is_visible(self):
@@ -317,7 +379,7 @@ class ImageViewer(QMainWindow):
         self.normal_size_action = QAction("&Normal Size", self, shortcut="Ctrl+0", triggered=self.normal_size)
         self.maximize_action = QAction("&Maximize", self, shortcut="Ctrl+F", triggered=self.maximize)
         self.about_action = QAction("&About", self, triggered=self.about)
-        self.about_qt_action = QAction("About &Qt", self, triggered=qApp.aboutQt)
+        self.about_qt_action = QAction("About &Qt", self, triggered=QApplication.aboutQt)
 
     def create_menus(self):
         self.file_menu = QMenu("&File", self)
@@ -327,10 +389,13 @@ class ImageViewer(QMainWindow):
         self.file_menu.addAction(self.exit_action)
 
         self.view_menu = QMenu("&View", self)
-        self.view_menu.addAction(self.zoom_in_action)
-        self.view_menu.addAction(self.zoom_out_action)
-        self.view_menu.addAction(self.normal_size_action)
-        self.view_menu.addAction(self.maximize_action)
+        self.view_menu.addAction(self.rotation_dock.toggleViewAction())
+
+        self.window_menu = QMenu("&Window", self)
+        self.window_menu.addAction(self.zoom_in_action)
+        self.window_menu.addAction(self.zoom_out_action)
+        self.window_menu.addAction(self.normal_size_action)
+        self.window_menu.addAction(self.maximize_action)
 
         self.help_menu = QMenu("&Help", self)
         self.help_menu.addAction(self.about_action)
@@ -338,32 +403,67 @@ class ImageViewer(QMainWindow):
 
         self.menuBar().addMenu(self.file_menu)
         self.menuBar().addMenu(self.view_menu)
+        self.menuBar().addMenu(self.window_menu)
         self.menuBar().addMenu(self.help_menu)
 
-    def create_toolbars(self):
-        self.navigation_toolbar = self.addToolBar("Frame Navigation")
+    def create_navigation_toolbar(self):
+        self.navigation_toolbar = QToolBar("Frame Navigation")
         self.navigation_toolbar.hide()
+        self.addToolBar(self.navigation_toolbar)
 
         self.previous_button = QPushButton("")
         self.previous_button.pressed.connect(self.open_previous_frame)
         self.navigation_toolbar.addWidget(self.previous_button)
 
         self.current_label = QLabel("")
-        self.current_label.setAlignment(Qt.AlignVCenter | Qt.AlignHCenter)
+        self.current_label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignHCenter)
         self.navigation_toolbar.addWidget(self.current_label)
 
         self.next_button = QPushButton("")
         self.next_button.pressed.connect(self.open_next_frame)
         self.navigation_toolbar.addWidget(self.next_button)
 
-if __name__ == '__main__':
-    import sys
-    from PyQt5.QtWidgets import QApplication
+    def update_navigation_toolbar(self):
 
+        # get the previous and next roi in the dataset
+        self.previous_slide_name, self.previous_roi_name = self.get_previous_frame()
+        self.next_slide_name, self.next_roi_name = self.get_next_frame()
+
+        if self.previous_roi_name != "":
+            self.previous_button.setText(f'{self.previous_slide_name}\n{self.previous_roi_name}')
+        else:
+            self.previous_button.setText("End of\nDataset")
+        self.current_label.setText(f'{self.slide_name}\n{self.roi_name}')
+        if self.next_roi_name != "":
+            self.next_button.setText(f'{self.next_slide_name}\n{self.next_roi_name}')
+        else:
+            self.next_button.setText("End of\nDataset")
+
+        self.navigation_toolbar.show()
+
+    def create_rotation_dock(self):
+        self.rotation_dock = QDockWidget("Rotation")
+        self.rotation_dock.hide()
+        self.rotation_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.rotation_dock)
+
+        self.rotation_dial = QDial()
+        self.rotation_dial.setWrapping(True)
+        self.rotation_dial.setNotchesVisible(True)
+        self.rotation_dial.setMinimum(0)
+        self.rotation_dial.setMaximum(360)
+        self.rotation_dial.setValue(180)
+        self.rotation_dial.valueChanged.connect(self.set_image_rotation)
+        self.rotation_dock.setWidget(self.rotation_dial)
+
+    def update_rotation_dock(self):
+        self.rotation_dock.show()
+
+if __name__ == '__main__':
     app = QApplication(sys.argv)
     viewer = ImageViewer()
     viewer.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
     # TODO QScrollArea support mouse
     # base on https://github.com/baoboa/pyqt5/blob/master/examples/widgets/imageviewer.py
