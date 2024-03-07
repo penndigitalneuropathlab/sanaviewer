@@ -190,6 +190,7 @@ class ImageViewer(QMainWindow):
         self.set_rotated_image(self.source_image_array)
         self.set_rescaled_image(self.source_image_array)
         self.set_current_image(self.source_image_array)
+        self.reset_zoom()
 
     def set_rotated_image(self, image_array: np.ndarray):
         self.rotated_image_array = image_array      
@@ -201,6 +202,9 @@ class ImageViewer(QMainWindow):
             self.rotated_image_array.strides[0],
             QImage.Format.Format_RGB888
         )
+
+        # calculate the aspect ratio of the rotated image
+        self.rotated_aspect_ratio = self.rotated_image.height() / self.rotated_image.width()
 
         rescaled_image_array = self.rescale_image(self.rotated_image_array, self.scale_factor)
 
@@ -248,9 +252,19 @@ class ImageViewer(QMainWindow):
 
     def rotate_image(self, image_array: np.ndarray, angle: int):
 
+        # get horz,vert scroll bar coord
+
+        # convert to coord on the image
+
         frame = Frame(image_array)
         frame.rotate(-angle)
+        M, new_w, new_h = frame.get_rotation_matrix(-angle)
+        frame.warp_affine(M, new_w, new_h)
         rotated_image_array = frame.img
+
+        # transform coord using M
+
+        # convert back to horz/vert scroll bar values and set them <- result, rotate around viewer center
 
         return rotated_image_array
 
@@ -291,48 +305,74 @@ class ImageViewer(QMainWindow):
     def zoom_in(self):
         self.set_scale_factor(self.scale_factor * 1.25)
         self.update_scroll_bars(1.25)
+        if max([self.current_image.width(), self.current_image.height()]) > 10000:
+            self.zoom_in_action.setDisabled(True)
+        else:
+            self.zoom_in_action.setEnabled(True)
+        self.zoom_out_action.setEnabled(True)
     def zoom_out(self):
         self.set_scale_factor(self.scale_factor / 1.25)
         self.update_scroll_bars(1/1.25)
-    def normal_size(self):
+        if min([self.current_image.width(), self.current_image.height()]) < 100:
+            self.zoom_out_action.setDisabled(True)
+        else:
+            self.zoom_out_action.setEnabled(True)
+        self.zoom_in_action.setEnabled(True)
+    def reset_zoom(self):
         self.set_scale_factor(1.0)
+        self.zoom_in_action.setEnabled(True)
+        self.zoom_in_action.setEnabled(True)
 
     # maximize the image such that the entire image fits on the desktop
     def maximize(self):
 
         # fit image to desktop, using the height or width of desktop as the limiter based on the aspect ratio
-        if self.aspect_ratio > 1:
+        if self.rotated_aspect_ratio > 1:
 
-            # amount to zoom, based on the desktop height minus the title bar of the MainWindow
-            scale_factor = (self.DESKTOP_HEIGHT - self.TITLEBAR_HEIGHT) / self.source_image.height()
-            print(self.DESKTOP_HEIGHT, self.TITLEBAR_HEIGHT, self.source_image.height())
-            print(scale_factor)
-            self.set_scale_factor(scale_factor)
+            # calculate the available height
+            h = self.DESKTOP_HEIGHT
+            h -= self.TITLEBAR_HEIGHT
+            if self.navigation_toolbar.isVisible():
+                h -= self.navigation_toolbar.height()
+            # if self.scroll_area.horizontalScrollBar().isVisible():
+            #     h -= self.SCROLLBAR_EXTENT
 
-            # scale again to account for the scroll bar is necessary
-            if self.horizontal_scroll_bar_is_visible():
-                scale_factor -= self.SCROLLBAR_EXTENT / self.source_image.height()
-                self.set_scale_factor(scale_factor)
+            # calculate the amount to zoom based on the available desktop height
+            self.set_scale_factor(h / self.rotated_image.height())
 
-            # center the window on the screen
-            self.move(QPoint(self.DESKTOP_RECT.center().x()-self.current_image.width()//2, 0))
+            # top left corner to move the window to center it
+            px = self.DESKTOP_RECT.width()//2 - self.current_image.width()//2
+            py = 0
 
+            screen_h = self.DESKTOP_HEIGHT - self.TITLEBAR_HEIGHT
+            screen_w = self.current_image.width()
+            if self.rotation_dock.isVisible() and not self.rotation_dock.isFloating():
+                screen_w += self.rotation_dock.width()
+        
         else:
 
-            # amount to zoom, based on the desktop width
-            scale_factor = self.DESKTOP_WIDTH / self.source_image.width()
-            self.set_scale_factor(scale_factor)
+            # calculate the available width
+            w = self.DESKTOP_WIDTH
+            if self.rotation_dock.isVisible() and not self.rotation_dock.isFloating():
+                w -= self.rotation_dock.width()
+            # if self.scroll_area.verticalScrollBar().isVisible():
+            #     w -= self.SCROLLBAR_EXTENT
 
-            # scale again to account for the scroll bar is necessary
-            if self.vertical_scroll_bar_is_visible():
-                scale_factor -= self.SCROLLBAR_EXTENT / self.source_image.width()
-                self.set_scale_factor(scale_factor)
+            # calculate the amount to zoom based on the available desktop width
+            self.set_scale_factor(w / self.rotated_image.width())
 
-            # center the window on the screen
-            self.move(0, QPoint(self.DESKTOP_RECT.center().y()-self.current_image.height()//2))
+            # top left corner to move the window to center it
+            px = 0
+            py = self.DESKTOP_RECT.height()//2 - self.current_image.height()//2
+
+            screen_h = self.current_image.height() + self.navigation_toolbar.height()
+            screen_w = self.DESKTOP_WIDTH
+
+        # center the window on the screen
+        self.move(QPoint(px, py))
 
         # resize the window to the image size
-        self.resize(self.current_image.size())
+        self.resize(screen_w, screen_h)
 
     # when the factor changes, need to move the scroll bars as well
     def update_scroll_bars(self, factor):
@@ -376,7 +416,7 @@ class ImageViewer(QMainWindow):
         self.exit_action = QAction("E&xit", self, shortcut="Ctrl+Q", triggered=self.close)
         self.zoom_in_action = QAction("Zoom &In (25%)", self, shortcut="Ctrl++", triggered=self.zoom_in)
         self.zoom_out_action = QAction("Zoom &Out (25%)", self, shortcut="Ctrl+-", triggered=self.zoom_out)
-        self.normal_size_action = QAction("&Normal Size", self, shortcut="Ctrl+0", triggered=self.normal_size)
+        self.reset_zoom_action = QAction("&Reset Zoom", self, shortcut="Ctrl+0", triggered=self.reset_zoom)
         self.maximize_action = QAction("&Maximize", self, shortcut="Ctrl+F", triggered=self.maximize)
         self.about_action = QAction("&About", self, triggered=self.about)
         self.about_qt_action = QAction("About &Qt", self, triggered=QApplication.aboutQt)
@@ -394,7 +434,7 @@ class ImageViewer(QMainWindow):
         self.window_menu = QMenu("&Window", self)
         self.window_menu.addAction(self.zoom_in_action)
         self.window_menu.addAction(self.zoom_out_action)
-        self.window_menu.addAction(self.normal_size_action)
+        self.window_menu.addAction(self.reset_zoom_action)
         self.window_menu.addAction(self.maximize_action)
 
         self.help_menu = QMenu("&Help", self)
