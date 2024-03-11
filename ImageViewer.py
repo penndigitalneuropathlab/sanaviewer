@@ -13,7 +13,7 @@ from PIL import Image
 from PIL.ImageQt import ImageQt
 
 from PyQt6.QtCore import Qt, QPoint, QPointF, QRect, QRectF
-from PyQt6.QtGui import QImage, QPixmap, QPalette, QPainter, QGuiApplication, QTransform, QAction
+from PyQt6.QtGui import QImage, QPixmap, QPalette, QPainter, QGuiApplication, QTransform, QAction, QMouseEvent
 from PyQt6.QtWidgets import QLabel, QSizePolicy, QScrollArea, QMessageBox, QMainWindow, QMenu, QFileDialog, QStyle, QToolBar, QPushButton, QDockWidget, QDial, QLineEdit, QWidget, QVBoxLayout, QSpinBox, QApplication
 
 from ColorDeconvolutionDock import ColorDeconvolutionDockWidget
@@ -488,13 +488,12 @@ class ImageViewer(QMainWindow):
     def set_image_rotation(self, angle):
         self.rotation_angle = angle - 180
         
-        rotated_image_array = self.rotate_image(self.deconvolved_image_array, self.rotation_angle)
+        rotated_image_array = self.rotate_image(self.overlay_image_array, self.rotation_angle)
 
         self.set_rotated_image(rotated_image_array)
 
-    # def set_default_image_rotation(self):
-    #     # TODO: double click rotaiton
-    #     self.rotation_dial.setValue(180)
+    def set_default_image_rotation(self):
+        self.rotation_dial.setValue(180)
 
     # functions which see if the image dimensions surpass the MainWindow dimensions
     def horizontal_scroll_bar_is_visible(self):
@@ -610,6 +609,7 @@ class ImageViewer(QMainWindow):
         self.rotation_dial.setMaximum(360)
         self.rotation_dial.setValue(180)
         self.rotation_dial.valueChanged.connect(self.set_image_rotation)
+        self.rotation_dial.mousePressEvent = self.rotation_dial_mouse_press_event
         # TODO: double click reset rotation, or view shortcut!!
         self.rotation_dock.setWidget(self.rotation_dial)
 
@@ -695,3 +695,9 @@ class ImageViewer(QMainWindow):
         overlay_image_array = self.overlay_masks(self.deconvolved_image_array)
 
         self.set_overlay_image(overlay_image_array)
+
+    def rotation_dial_mouse_press_event(self, event: QMouseEvent):
+        if event.button() == Qt.RightButton:
+            self.set_default_image_rotation()
+        else:
+            QDial.mousePressEvent(self.rotation_dial, event)
