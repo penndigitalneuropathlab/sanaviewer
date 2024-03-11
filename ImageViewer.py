@@ -4,10 +4,11 @@
 import os
 import sys
 import math
+import time
 
 import cv2
 import numpy as np
-from sana.image import Frame
+from sana.image import Frame, overlay_mask
 from PIL import Image
 from PIL.ImageQt import ImageQt
 
@@ -16,6 +17,9 @@ from PyQt6.QtGui import QImage, QPixmap, QPalette, QPainter, QGuiApplication, QT
 from PyQt6.QtWidgets import QLabel, QSizePolicy, QScrollArea, QMessageBox, QMainWindow, QMenu, QFileDialog, QStyle, QToolBar, QPushButton, QDockWidget, QDial, QLineEdit, QWidget, QVBoxLayout, QSpinBox, QApplication
 
 from ColorDeconvolutionDock import ColorDeconvolutionDockWidget
+from OverlayDock import OverlayDockWidget
+
+# from RotationDial import RotationDialWidget
 
 class ImageViewer(QMainWindow):
     def __init__(self):
@@ -47,17 +51,24 @@ class ImageViewer(QMainWindow):
 
         self.setCentralWidget(self.scroll_area)
 
+        # toolbars
         self.create_navigation_toolbar()
+
+        # docks
         self.create_rotation_dock()
         self.create_deconvolution_dock()
+        self.create_overlay_dock()
 
+        # actions
         self.create_actions()
+
+        # menus
         self.create_menus()
 
         self.setWindowTitle("Image Viewer")
         self.resize(800, 600)
 
-        self.open_frame('../sana/testing/test_segment_output/2010-011-36F_N_V1_GFAP_4K_07-13-22_PS/GM_VEC_0/2010-011-36F_N_V1_GFAP_4K_07-13-22_PS.png')
+        self.open_frame('./data/2002-070-35F_R_MFC_SMI94_400_09-08-21_EX/GM_MFCcrown/2002-070-35F_R_MFC_SMI94_400_09-08-21_EX_ORIG.png')
 
     def set_viewer_size(self, size):
         self.resize(size)
@@ -68,10 +79,15 @@ class ImageViewer(QMainWindow):
             file_name, _ = QFileDialog.getOpenFileName(self, 'QFileDialog.getOpenFileName()', '',
                                                     'Images (*.png *.jpeg *.jpg *.bmp *.gif)', options=options)
         if file_name:
+            if not os.path.exists(file_name):
+                QMessageBox.information(self, "Image Viewer", "File does not exist: %s" % file_name)
+                return
             try:
-                image_array = np.asarray(Image.open(file_name))
+                frame = Frame(file_name)
+                image_array = frame.img
+                # image_array = np.asarray(Image.open(file_name))
             except:
-                QMessageBox.information(self, "Image Viewer", "Cannot load %s." % file_name)
+                QMessageBox.information(self, "Image Viewer", "Cannot load %s" % file_name)
                 return
 
         # parse the data storage structure
@@ -82,14 +98,22 @@ class ImageViewer(QMainWindow):
 
         # update the necessary widgets
         self.set_source_image(image_array)
+
+        # update toolbars
         self.update_navigation_toolbar()
+
+        # update docks
         self.update_rotation_dock()
         self.update_deconvolution_dock()
+        self.update_overlay_dock()
+
+    def get_directories(self, d):
+        return sorted([x for x in os.listdir(d) if os.path.isdir(os.path.join(d, x))])
 
     def get_next_frame(self):
 
         # find the next roi in the slide directory
-        roi_names = sorted(os.listdir(self.slide_directory))
+        roi_names = self.get_directories(self.slide_directory)
         next_roi_name_idx = roi_names.index(self.roi_name) + 1
         if next_roi_name_idx < len(roi_names):
             next_slide_name = self.slide_name
@@ -97,7 +121,7 @@ class ImageViewer(QMainWindow):
         
         # find the first roi in the next slide
         else:
-            slide_names = sorted(os.listdir(self.data_directory))
+            slide_names = self.get_directories(self.data_directory)
 
             # look forward through the slides
             i = 1
@@ -110,9 +134,10 @@ class ImageViewer(QMainWindow):
                     next_slide_directory = os.path.join(self.data_directory, next_slide_name)
 
                     # get the first roi in this new slide
-                    roi_names = sorted(os.listdir(next_slide_directory))
+                    roi_names = self.get_directories(next_slide_directory)
                     if len(roi_names) != 0:
                         next_roi_name = roi_names[0]
+                        break
 
                     # slide is empty, continue to next slide
                     else:
@@ -129,7 +154,7 @@ class ImageViewer(QMainWindow):
     def get_previous_frame(self):
 
         # find the previous roi in the slide directory
-        roi_names = sorted(os.listdir(self.slide_directory))
+        roi_names = self.get_directories(self.slide_directory)
         previous_roi_name_idx = roi_names.index(self.roi_name) - 1
         if previous_roi_name_idx >= 0:
             previous_slide_name = self.slide_name
@@ -137,7 +162,7 @@ class ImageViewer(QMainWindow):
     
         # find the last roi in the previous slide
         else:
-            slide_names = sorted(os.listdir(self.data_directory))
+            slide_names = self.get_directories(self.data_directory)
 
             # look backward through the slides
             i = 1
@@ -150,10 +175,10 @@ class ImageViewer(QMainWindow):
                     previous_slide_directory = os.path.join(self.data_directory, previous_slide_name)
 
                     # get the last roi in this new slide
-                    roi_names = sorted(os.listdir(previous_slide_directory))
+                    roi_names = self.get_directories(previous_slide_directory)
                     if len(roi_names) != 0:
                         previous_roi_name = roi_names[-1]
-                        return previous_slide_name, previous_roi_name
+                        break
 
                     # slide is empty, continue to previous slide
                     else:
@@ -169,12 +194,12 @@ class ImageViewer(QMainWindow):
 
     def open_previous_frame(self):
         if self.previous_roi_name != "":
-            file_name = os.path.join(self.data_directory, self.previous_slide_name, self.previous_roi_name, self.previous_slide_name+'.png')
+            file_name = os.path.join(self.data_directory, self.previous_slide_name, self.previous_roi_name, self.previous_slide_name+'_ORIG.png')
             self.open_frame(file_name)
 
     def open_next_frame(self):
         if self.next_roi_name != "":
-            file_name = os.path.join(self.data_directory, self.next_slide_name, self.next_roi_name, self.next_slide_name+'.png')
+            file_name = os.path.join(self.data_directory, self.next_slide_name, self.next_roi_name, self.next_slide_name+'_ORIG.png')
             self.open_frame(file_name)      
                  
     def set_source_image(self, image_array: np.ndarray):
@@ -191,11 +216,40 @@ class ImageViewer(QMainWindow):
         # calculate aspect ratio of the source image
         self.aspect_ratio = self.source_image.height() / self.source_image.width()
 
+        deconvolution_image_array = self.deconvolve_image(self.source_image_array)
+
         # initialize the window with the source image
-        self.set_rotated_image(self.source_image_array)
-        self.set_rescaled_image(self.source_image_array)
-        self.set_current_image(self.source_image_array)
-        self.reset_zoom()
+        self.set_deconvolved_image(deconvolution_image_array)
+
+    def set_deconvolved_image(self, image_array: np.ndarray):
+        self.deconvolved_image_array = image_array
+
+        self.deconvolved_image = QImage(
+            self.deconvolved_image_array, 
+            self.deconvolved_image_array.shape[1], 
+            self.deconvolved_image_array.shape[0],
+            self.deconvolved_image_array.strides[0],
+            QImage.Format.Format_RGB888,     
+        )
+
+        overlay_image_array = self.overlay_masks(self.deconvolved_image_array)
+
+        self.set_overlay_image(overlay_image_array)
+
+    def set_overlay_image(self, image_array: np.ndarray):
+        self.overlay_image_array = image_array
+
+        self.overlay_image = QImage(
+            self.overlay_image_array, 
+            self.overlay_image_array.shape[1], 
+            self.overlay_image_array.shape[0],
+            self.overlay_image_array.strides[0],
+            QImage.Format.Format_RGB888,     
+        )
+
+        rotated_image_array = self.rotate_image(self.overlay_image_array, self.rotation_angle)
+
+        self.set_rotated_image(rotated_image_array)
 
     def set_rotated_image(self, image_array: np.ndarray):
         self.rotated_image_array = image_array      
@@ -208,7 +262,6 @@ class ImageViewer(QMainWindow):
             QImage.Format.Format_RGB888
         )
 
-        # calculate the aspect ratio of the rotated image
         self.rotated_aspect_ratio = self.rotated_image.height() / self.rotated_image.width()
 
         rescaled_image_array = self.rescale_image(self.rotated_image_array, self.scale_factor)
@@ -225,22 +278,7 @@ class ImageViewer(QMainWindow):
             self.rescaled_image_array.strides[0],
             QImage.Format.Format_RGB888,
         )
-
-        deconvolved_image_array = self.deconvolve_image(self.rescaled_image_array)
-
-        self.set_deconvolved_image(deconvolved_image_array)
-
-    def set_deconvolved_image(self, image_array: np.ndarray):
-        self.deconvolved_image_array = image_array
-
-        self.deconvolved_image = QImage(
-            self.deconvolved_image_array, 
-            self.deconvolved_image_array.shape[1], 
-            self.deconvolved_image_array.shape[0],
-            self.deconvolved_image_array.strides[0],
-            QImage.Format.Format_RGB888,     
-        )
-        self.set_current_image(self.deconvolved_image_array)
+        self.set_current_image(self.rescaled_image_array)
 
     def set_current_image(self, image_array: np.ndarray):
         self.current_image_array = image_array
@@ -291,6 +329,7 @@ class ImageViewer(QMainWindow):
             return image_array
         
         stains = self.deconvolution_dock.widget.ss.separate(image_array)
+
         if self.stain_A_enabled:
             stains[:,:,0] = np.clip(stains[:,:,0], self.stain_A_range[0], self.stain_A_range[1])
         else:
@@ -307,6 +346,29 @@ class ImageViewer(QMainWindow):
 
         return deconvolved_image_array
 
+    def overlay_masks(self, image_array: np.ndarray):
+        overlay_frame = Frame(image_array)
+        
+        for widget in self.overlay_dock.widget.entry_widgets:
+            if widget.get_enabled():
+                if widget.outlines_only:
+                    overlay_frame = overlay_mask(
+                        overlay_frame, None,
+                        main_roi=widget.main_roi_bodies[0].polygon,
+                        alpha=widget.get_alpha(),
+                        color=widget.get_color(),
+                        linewidth=widget.get_linewidth(),
+                    )
+                else:
+                    overlay_frame = overlay_mask(
+                        overlay_frame, widget.frame, 
+                        alpha=widget.get_alpha(), 
+                        color=widget.get_color(),
+                    )
+
+        overlay_image_array = overlay_frame.img
+
+        return overlay_image_array
 
     def save_frame(self, file_name=""):
         if file_name == "" or file_name == False:
@@ -426,9 +488,13 @@ class ImageViewer(QMainWindow):
     def set_image_rotation(self, angle):
         self.rotation_angle = angle - 180
         
-        rotated_image_array = self.rotate_image(self.source_image_array, self.rotation_angle)
+        rotated_image_array = self.rotate_image(self.deconvolved_image_array, self.rotation_angle)
 
         self.set_rotated_image(rotated_image_array)
+
+    # def set_default_image_rotation(self):
+    #     # TODO: double click rotaiton
+    #     self.rotation_dial.setValue(180)
 
     # functions which see if the image dimensions surpass the MainWindow dimensions
     def horizontal_scroll_bar_is_visible(self):
@@ -470,6 +536,8 @@ class ImageViewer(QMainWindow):
 
         self.view_menu = QMenu("&View", self)
         self.view_menu.addAction(self.rotation_dock.toggleViewAction())
+        self.view_menu.addAction(self.deconvolution_dock.toggleViewAction())
+        self.view_menu.addAction(self.overlay_dock.toggleViewAction())
 
         self.window_menu = QMenu("&Window", self)
         self.window_menu.addAction(self.zoom_in_action)
@@ -513,18 +581,24 @@ class ImageViewer(QMainWindow):
 
         if self.previous_roi_name != "":
             self.previous_button.setText(f'{self.previous_slide_name}\n{self.previous_roi_name}')
+            self.previous_button.setEnabled(True)
         else:
             self.previous_button.setText("End of\nDataset")
+            self.previous_button.setEnabled(False)
+
         self.current_label.setText(f'{self.slide_name}\n{self.roi_name}')
+        
         if self.next_roi_name != "":
             self.next_button.setText(f'{self.next_slide_name}\n{self.next_roi_name}')
+            self.next_button.setEnabled(True)
         else:
             self.next_button.setText("End of\nDataset")
+            self.next_button.setEnabled(False)
 
         self.navigation_toolbar.show()
 
     def create_rotation_dock(self):
-        self.rotation_dock = QDockWidget("Rotation")
+        self.rotation_dock = QDockWidget("Rotation Dock")
         self.rotation_dock.hide()
         self.rotation_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.rotation_dock)
@@ -536,16 +610,18 @@ class ImageViewer(QMainWindow):
         self.rotation_dial.setMaximum(360)
         self.rotation_dial.setValue(180)
         self.rotation_dial.valueChanged.connect(self.set_image_rotation)
+        # TODO: double click reset rotation, or view shortcut!!
         self.rotation_dock.setWidget(self.rotation_dial)
 
     def update_rotation_dock(self):
         self.rotation_dock.show()
 
     def create_deconvolution_dock(self):
-        self.deconvolution_dock = ColorDeconvolutionDockWidget()
+        self.deconvolution_dock = ColorDeconvolutionDockWidget("Color Deconvolution Dock")
         self.deconvolution_dock.hide()
         self.deconvolution_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.deconvolution_dock)
+
         self.deconvolution_dock.widget.stain_A_slider.valueChanged.connect(self.set_stain_A_range)
         self.deconvolution_dock.widget.stain_B_slider.valueChanged.connect(self.set_stain_B_range)
         self.deconvolution_dock.widget.stain_C_slider.valueChanged.connect(self.set_stain_C_range)
@@ -596,6 +672,26 @@ class ImageViewer(QMainWindow):
 
     def update_deconvolution_image(self):
 
-        deconvolved_image_array = self.deconvolve_image(self.rescaled_image_array)
+        deconvolved_image_array = self.deconvolve_image(self.source_image_array)
 
         self.set_deconvolved_image(deconvolved_image_array)
+
+    def create_overlay_dock(self):
+        self.overlay_dock = OverlayDockWidget('Overlay Dock')
+        self.overlay_dock.hide()
+        self.overlay_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.overlay_dock)
+
+    def update_overlay_dock(self):
+        self.overlay_dock.widget.set_overlay_entries(self.roi_directory)
+        self.overlay_dock.show()
+
+        for widget in self.overlay_dock.widget.entry_widgets:
+            widget.state_changed.connect(self.update_overlay_image)
+
+        self.update_overlay_image()
+
+    def update_overlay_image(self):
+        overlay_image_array = self.overlay_masks(self.deconvolved_image_array)
+
+        self.set_overlay_image(overlay_image_array)

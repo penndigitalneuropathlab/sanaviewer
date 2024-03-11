@@ -7,8 +7,8 @@ from sana.color_deconvolution import StainSeparator
 from superqt import QRangeSlider
 
 class ColorDeconvolutionDockWidget(QDockWidget):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, name=""):
+        super().__init__(name)
     
         self.widget = ColorDeconvolutionWidget()
 
