@@ -62,6 +62,29 @@ class OverlayWidget(QWidget):
             self.entry_layout.addWidget(widget)
             self.entry_widgets.append(widget)
 
+    def update_overlay_entries(self, d):
+     
+        # find main masks if available
+        for f in os.listdir(d):
+            if '_MAIN_' in f and not '_DEFORM_' in f and f.endswith('.dat.npz'):
+                for widget in self.entry_widgets:
+                    if widget.get_label() == 'MAIN_ROI':
+                        widget.load_frame(os.path.join(d, f))
+                        break
+                break
+
+        # find the files
+        overlay_files = []
+        for f in os.listdir(d):
+            if f.endswith('.dat.npz'):
+                for suffix in self.VALID_SUFFIXES:
+                    if suffix in f:
+                        for widget in self.entry_widgets:
+                            if widget.get_label() == suffix:
+                                widget.load_frame(os.path.join(d, f))
+                                break
+                        break
+
 class OverlayEntryWidget(QWidget):
     state_changed = pyqtSignal()
 
@@ -73,9 +96,7 @@ class OverlayEntryWidget(QWidget):
         self.main_layout = QHBoxLayout()
         self.setLayout(self.main_layout)
 
-        self.frame = Frame(filename)
-        if self.outlines_only:
-            self.main_roi_bodies, self.main_roi_holes = self.frame.get_contours()
+        self.load_frame(filename)
 
         self.checkbox = QCheckBox()
         if self.outlines_only:
@@ -100,9 +121,17 @@ class OverlayEntryWidget(QWidget):
             self.spinbox.setMinimum(0)
             self.spinbox.setMaximum(100)
             self.spinbox.setSingleStep(1)
-            self.spinbox.setValue(5)
+            self.spinbox.setValue(15)
         self.spinbox.valueChanged.connect(self.state_changed.emit)
         self.main_layout.addWidget(self.spinbox)
+
+    def load_frame(self, filename):
+        self.frame = Frame(filename)
+        if self.outlines_only:
+            self.main_roi_bodies, self.main_roi_holes = self.frame.get_contours()
+
+    def get_label(self):
+        return self.colorpicker.text()
 
     def get_color(self):
         return (

@@ -11,6 +11,7 @@ import numpy as np
 from sana.image import Frame, overlay_mask
 from PIL import Image
 from PIL.ImageQt import ImageQt
+import pandas as pd
 
 from PyQt6.QtCore import Qt, QPoint, QPointF, QRect, QRectF
 from PyQt6.QtGui import QImage, QPixmap, QPalette, QPainter, QGuiApplication, QTransform, QAction, QMouseEvent
@@ -18,8 +19,7 @@ from PyQt6.QtWidgets import QLabel, QSizePolicy, QScrollArea, QMessageBox, QMain
 
 from ColorDeconvolutionDock import ColorDeconvolutionDockWidget
 from OverlayDock import OverlayDockWidget
-
-# from RotationDial import RotationDialWidget
+from LabeledSpinBox import LabeledSpinBoxWidget
 
 class ImageViewer(QMainWindow):
     def __init__(self):
@@ -37,6 +37,7 @@ class ImageViewer(QMainWindow):
 
         self.scale_factor = 1.0
         self.rotation_angle = 0
+        self.df = None
 
         self.image_label = QLabel()
         self.image_label.setBackgroundRole(QPalette.ColorRole.Base)
@@ -53,6 +54,7 @@ class ImageViewer(QMainWindow):
 
         # toolbars
         self.create_navigation_toolbar()
+        self.create_ordinal_toolbar()
 
         # docks
         self.create_rotation_dock()
@@ -69,14 +71,28 @@ class ImageViewer(QMainWindow):
         self.resize(800, 600)
 
         self.open_frame('./data/2002-070-35F_R_MFC_SMI94_400_09-08-21_EX/GM_MFCcrown/2002-070-35F_R_MFC_SMI94_400_09-08-21_EX_ORIG.png')
+        self.import_spreadsheet('./data/initial_sheet.csv')
+        self.overlay_dock.show()
+        self.ordinal_toolbar.show()
 
     def set_viewer_size(self, size):
         self.resize(size)
 
+    def quit(self):
+
+        if not self.df is None:
+            reply = QMessageBox.question(self, "Image Viewer", "Save ordinal scores before quit?", QMessageBox.Yes|QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                success = self.save_spreadsheet()
+                if not success:
+                    return
+
+        self.close()
+
     def open_frame(self, file_name=""):
         if file_name == "" or file_name == False:
             options = QFileDialog.Options()
-            file_name, _ = QFileDialog.getOpenFileName(self, 'QFileDialog.getOpenFileName()', '',
+            file_name, _ = QFileDialog.getOpenFileName(self, '', '',
                                                     'Images (*.png *.jpeg *.jpg *.bmp *.gif)', options=options)
         if file_name:
             if not os.path.exists(file_name):
@@ -98,14 +114,6 @@ class ImageViewer(QMainWindow):
 
         # update the necessary widgets
         self.set_source_image(image_array)
-
-        # update toolbars
-        self.update_navigation_toolbar()
-
-        # update docks
-        self.update_rotation_dock()
-        self.update_deconvolution_dock()
-        self.update_overlay_dock()
 
     def get_directories(self, d):
         return sorted([x for x in os.listdir(d) if os.path.isdir(os.path.join(d, x))])
@@ -216,6 +224,16 @@ class ImageViewer(QMainWindow):
         # calculate aspect ratio of the source image
         self.aspect_ratio = self.source_image.height() / self.source_image.width()
 
+        # update toolbars
+        self.update_navigation_toolbar()
+        self.update_ordinal_toolbar()
+
+        # update docks
+        # TODO: don't show these by default
+        self.rotation_dock.show()
+        self.deconvolution_dock.show()
+        self.update_overlay_dock()
+        
         deconvolution_image_array = self.deconvolve_image(self.source_image_array)
 
         # initialize the window with the source image
@@ -516,9 +534,9 @@ class ImageViewer(QMainWindow):
                           "zooming and scaling features.</p>")
 
     def create_actions(self):
-        self.open_action = QAction("&Open...", self, shortcut="Ctrl+O", triggered=self.open_frame)
-        self.save_action = QAction("&Save...", self, shortcut="Ctrl+S", triggered=self.save_frame)
-        self.exit_action = QAction("E&xit", self, shortcut="Ctrl+Q", triggered=self.close)
+        self.open_action = QAction("&Open Frame...", self, shortcut="Ctrl+O", triggered=self.open_frame)
+        self.save_action = QAction("&Save Frame...", self, shortcut="Ctrl+S", triggered=self.save_frame)
+        self.exit_action = QAction("E&xit", self, shortcut="Ctrl+Q", triggered=self.quit)
         self.zoom_in_action = QAction("Zoom &In (25%)", self, shortcut="Ctrl++", triggered=self.zoom_in)
         self.zoom_out_action = QAction("Zoom &Out (25%)", self, shortcut="Ctrl+-", triggered=self.zoom_out)
         self.reset_zoom_action = QAction("&Reset Zoom", self, shortcut="Ctrl+0", triggered=self.reset_zoom)
@@ -537,6 +555,8 @@ class ImageViewer(QMainWindow):
         self.view_menu.addAction(self.rotation_dock.toggleViewAction())
         self.view_menu.addAction(self.deconvolution_dock.toggleViewAction())
         self.view_menu.addAction(self.overlay_dock.toggleViewAction())
+        self.view_menu.addAction(self.navigation_toolbar.toggleViewAction())
+        self.view_menu.addAction(self.ordinal_toolbar.toggleViewAction())
 
         self.window_menu = QMenu("&Window", self)
         self.window_menu.addAction(self.zoom_in_action)
@@ -596,6 +616,107 @@ class ImageViewer(QMainWindow):
 
         self.navigation_toolbar.show()
 
+    def create_ordinal_toolbar(self):
+        self.ordinal_toolbar = QToolBar("Ordinal Scoring")
+        self.ordinal_toolbar.hide()
+        self.ordinal_toolbar.setFloatable(False)
+        self.ordinal_toolbar.setMovable(False)
+        self.addToolBar(self.ordinal_toolbar)
+
+        self.import_spreadsheet_button = QPushButton("Import\nSpreadsheet")
+        self.import_spreadsheet_button.pressed.connect(self.import_spreadsheet)
+        self.ordinal_toolbar.addWidget(self.import_spreadsheet_button)
+
+        self.save_spreadsheet_button = QPushButton("Save\nSpreadsheet")
+        self.save_spreadsheet_button.pressed.connect(self.save_spreadsheet)
+        self.ordinal_toolbar.addWidget(self.save_spreadsheet_button)
+
+        self.ordinal_spinboxs = []
+        self.ordinal_spinbox_actions = []
+
+    def update_ordinal_toolbar(self):
+        if not self.df is None:
+            self.set_ordinal_spinbox_values()
+            self.update_spreadsheet()
+
+    def import_spreadsheet(self, file_name=""):
+        if file_name == "" or file_name == False:
+            options = QFileDialog.Options()
+            file_name, _ = QFileDialog.getOpenFileName(self, '', '', 'Spreadsheet (*.xlsx *.csv', options=options)
+        if file_name:
+            if not os.path.exists(file_name):
+                QMessageBox.information(self, "Image Viewer", "File does not exist: %s" % file_name)
+                return
+            
+            for widget, action in zip(self.ordinal_spinboxs, self.ordinal_spinbox_actions):
+                self.ordinal_toolbar.removeAction(action)
+            self.ordinal_spinboxs = []
+            self.ordinal_spinbox_actions = []
+
+            self.slide_column = 'SlideROI'
+
+            if file_name.endswith('.csv'):
+                self.df = pd.read_csv(file_name)
+            else:
+                self.df = pd.read_excel(file_name)
+
+            for value_column in self.df.columns:
+                if value_column == self.slide_column:
+                    continue
+                widget = LabeledSpinBoxWidget(value_column, 0)
+                widget.value_changed.connect(self.update_spreadsheet)
+                action = self.ordinal_toolbar.addWidget(widget)
+                self.ordinal_spinboxs.append(widget)
+                self.ordinal_spinbox_actions.append(action)
+
+            self.update_ordinal_toolbar()
+
+    def set_ordinal_spinbox_values(self):
+        for value_column in self.df.columns:
+            if value_column == self.slide_column:
+                continue
+
+            idx = self.slide_name+'_'+self.roi_name
+            row_loc = self.df[self.df[self.slide_column] == idx].index
+            if len(row_loc) != 0:
+                value = self.df.loc[row_loc[0]][value_column]
+            else:
+                value = 0
+
+            widget = [widget for widget in self.ordinal_spinboxs if widget.get_label() == value_column][0]
+            widget.blockSignals(True)
+            widget.set_value(value)
+            widget.blockSignals(False)
+
+
+    def update_spreadsheet(self):
+
+        idx = self.slide_name+'_'+self.roi_name
+        if not idx in list(self.df[self.slide_column]):
+            self.df.loc[len(self.df)] = [idx,] + [0]*len(self.ordinal_spinboxs)
+
+        row_idx = self.df[self.df[self.slide_column] == idx].index[0]
+
+        for widget in self.ordinal_spinboxs:
+            column = widget.get_label()
+            value = widget.get_value()
+            self.df.at[row_idx, column] = value
+        print(self.df)
+
+    def save_spreadsheet(self, file_name=""):
+        if file_name == "" or file_name == False:
+            options = QFileDialog.Options()
+            file_name, _ = QFileDialog.getSaveFileName(self, '', '',
+                                                    'Spreadsheets (*.csv *.xlsx)', options=options)
+        if file_name:
+            if file_name.endswith('.csv'):
+                self.df.to_csv(file_name)
+            else:
+                self.df.to_excel(file_name)
+            return True
+        else:
+            return False
+
     def create_rotation_dock(self):
         self.rotation_dock = QDockWidget("Rotation Dock")
         self.rotation_dock.hide()
@@ -612,9 +733,6 @@ class ImageViewer(QMainWindow):
         self.rotation_dial.mousePressEvent = self.rotation_dial_mouse_press_event
         # TODO: double click reset rotation, or view shortcut!!
         self.rotation_dock.setWidget(self.rotation_dial)
-
-    def update_rotation_dock(self):
-        self.rotation_dock.show()
 
     def create_deconvolution_dock(self):
         self.deconvolution_dock = ColorDeconvolutionDockWidget("Color Deconvolution Dock")
@@ -637,10 +755,6 @@ class ImageViewer(QMainWindow):
         self.stain_C_enabled = self.deconvolution_dock.widget.stain_C_checkbox.isEnabled()
 
         
-    def update_deconvolution_dock(self):
-        self.deconvolution_dock.show()
-        # TODO: update stainseparator when this is called!
-
     def set_stain_A_range(self, values):
         self.stain_A_range = (
             self.deconvolution_dock.widget.slider_to_od(values[0]),
@@ -683,13 +797,16 @@ class ImageViewer(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.overlay_dock)
 
     def update_overlay_dock(self):
-        self.overlay_dock.widget.set_overlay_entries(self.roi_directory)
-        self.overlay_dock.show()
 
-        for widget in self.overlay_dock.widget.entry_widgets:
-            widget.state_changed.connect(self.update_overlay_image)
+        # TODO: don't show if no overlays exist
+        if len(self.overlay_dock.widget.entry_widgets) == 0:
+            self.overlay_dock.widget.set_overlay_entries(self.roi_directory)
 
-        self.update_overlay_image()
+            for widget in self.overlay_dock.widget.entry_widgets:
+                widget.state_changed.connect(self.update_overlay_image)
+        else:
+            self.overlay_dock.widget.update_overlay_entries(self.roi_directory)
+            pass
 
     def update_overlay_image(self):
         overlay_image_array = self.overlay_masks(self.deconvolved_image_array)
