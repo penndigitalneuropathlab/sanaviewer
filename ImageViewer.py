@@ -13,16 +13,16 @@ from PIL import Image
 from PIL.ImageQt import ImageQt
 import pandas as pd
 
-from PyQt6.QtCore import Qt, QPoint, QPointF, QRect, QRectF
-from PyQt6.QtGui import QImage, QPixmap, QPalette, QPainter, QGuiApplication, QTransform, QAction, QMouseEvent
-from PyQt6.QtWidgets import QLabel, QSizePolicy, QScrollArea, QMessageBox, QMainWindow, QMenu, QFileDialog, QStyle, QToolBar, QPushButton, QDockWidget, QDial, QLineEdit, QWidget, QVBoxLayout, QSpinBox, QApplication
+from PyQt5.QtCore import Qt, QPoint, QPointF, QRect, QRectF
+from PyQt5.QtGui import QImage, QPixmap, QPalette, QPainter, QGuiApplication, QTransform, QMouseEvent
+from PyQt5.QtWidgets import QLabel, QSizePolicy, QScrollArea, QMessageBox, QMainWindow, QMenu, QFileDialog, QStyle, QToolBar, QPushButton, QDockWidget, QDial, QLineEdit, QWidget, QVBoxLayout, QSpinBox, QApplication, QAction
 
 from ColorDeconvolutionDock import ColorDeconvolutionDockWidget
 from OverlayDock import OverlayDockWidget
 from LabeledSpinBox import LabeledSpinBoxWidget
 
 class ImageViewer(QMainWindow):
-    def __init__(self):
+    def __init__(self, init_f=None):
         super().__init__()
 
         # TODO: this might be off by a pixel?
@@ -70,10 +70,10 @@ class ImageViewer(QMainWindow):
         self.setWindowTitle("Image Viewer")
         self.resize(800, 600)
 
-        self.open_frame('./data/2002-070-35F_R_MFC_SMI94_400_09-08-21_EX/GM_MFCcrown/2002-070-35F_R_MFC_SMI94_400_09-08-21_EX_ORIG.png')
-        self.import_spreadsheet('./data/initial_sheet.csv')
-        self.overlay_dock.show()
-        self.ordinal_toolbar.show()
+        if not init_f is None:
+            self.open_frame(init_f)
+            self.overlay_dock.show()
+        # self.ordinal_toolbar.show()
 
     def set_viewer_size(self, size):
         self.resize(size)
@@ -202,12 +202,12 @@ class ImageViewer(QMainWindow):
 
     def open_previous_frame(self):
         if self.previous_roi_name != "":
-            file_name = os.path.join(self.data_directory, self.previous_slide_name, self.previous_roi_name, self.previous_slide_name+'_ORIG.png')
+            file_name = os.path.join(self.data_directory, self.previous_slide_name, self.previous_roi_name, self.previous_slide_name+'.png')
             self.open_frame(file_name)
 
     def open_next_frame(self):
         if self.next_roi_name != "":
-            file_name = os.path.join(self.data_directory, self.next_slide_name, self.next_roi_name, self.next_slide_name+'_ORIG.png')
+            file_name = os.path.join(self.data_directory, self.next_slide_name, self.next_roi_name, self.next_slide_name+'.png')
             self.open_frame(file_name)      
                  
     def set_source_image(self, image_array: np.ndarray):
@@ -799,14 +799,19 @@ class ImageViewer(QMainWindow):
     def update_overlay_dock(self):
 
         # TODO: don't show if no overlays exist
-        if len(self.overlay_dock.widget.entry_widgets) == 0:
-            self.overlay_dock.widget.set_overlay_entries(self.roi_directory)
+        # TODO: use this code once upgraded
+        # if len(self.overlay_dock.widget.entry_widgets) == 0:
+        #     self.overlay_dock.widget.set_entries(self.roi_directory)
 
-            for widget in self.overlay_dock.widget.entry_widgets:
-                widget.state_changed.connect(self.update_overlay_image)
-        else:
-            self.overlay_dock.widget.update_overlay_entries(self.roi_directory)
-            pass
+        #     for widget in self.overlay_dock.widget.entry_widgets:
+        #         widget.state_changed.connect(self.update_overlay_image)
+        # else:
+        #     self.overlay_dock.widget.update_entries(self.roi_directory)
+        #     pass
+        self.overlay_dock.widget.set_entries(self.roi_directory)
+        for widget in self.overlay_dock.widget.entry_widgets:
+            widget.state_changed.connect(self.update_overlay_image)
+            
 
     def update_overlay_image(self):
         overlay_image_array = self.overlay_masks(self.deconvolved_image_array)

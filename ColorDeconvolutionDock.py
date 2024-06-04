@@ -1,6 +1,6 @@
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QWidget, QLabel, QCheckBox, QHBoxLayout, QVBoxLayout, QDockWidget
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QWidget, QLabel, QCheckBox, QHBoxLayout, QVBoxLayout, QDockWidget
 
 from sana.color_deconvolution import StainSeparator
 

@@ -1,13 +1,15 @@
 
 import os
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QWidget, QLabel, QCheckBox, QHBoxLayout, QVBoxLayout, QDockWidget, QDoubleSpinBox, QSpinBox
+from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QColor
+from PyQt5.QtWidgets import QWidget, QLabel, QCheckBox, QHBoxLayout, QVBoxLayout, QDockWidget, QDoubleSpinBox, QSpinBox, QComboBox
 
 from ColorPicker import ColorPickerPushButton
 
-from sana.image import Frame, create_mask
+from sana.image import Frame
+
+import pdnl_io
 
 class OverlayDockWidget(QDockWidget):
     def __init__(self, name=""):
@@ -26,13 +28,18 @@ class OverlayWidget(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.entry_widgets = []
-
         self.entry_layout = QVBoxLayout()
 
         self.setLayout(self.entry_layout)
 
-    def set_overlay_entries(self, d):
+        self.measurements_widget = QComboBox()
+        self.entry_layout.addWidget(self.measurements_widget)
+
+        self.entry_widgets = []
+
+
+    def set_entries(self, d, measurement=""):
+        self.d = d
 
         # clear the widgets
         for widget in self.entry_widgets:
@@ -40,50 +47,109 @@ class OverlayWidget(QWidget):
             # TODO: delete widget?
         self.entry_widgets = []
 
-        # find main masks if available
+        self.set_roi_entries(d)
+        if measurement == "":
+            self.set_measurements(d)
+            measurement = self.measurements[1]
+        self.set_overlay_entries(d, measurement)
+
+    def set_roi_entries(self, d):
         for f in os.listdir(d):
-            if '_MAIN_' in f and not '_DEFORM_' in f and f.endswith('.dat.npz'):
-                widget = OverlayEntryWidget(os.path.join(d, f), 'MAIN_ROI', outlines_only=True, default_color='black')
-                self.entry_layout.addWidget(widget)
-                self.entry_widgets.append(widget)
+            if f.endswith('.npz'):
+                suffix = pdnl_io.get_slide_suffix(f)
+                if 'MAIN' in suffix:
+                    widget = OverlayEntryWidget(os.path.join(d, f), 'MAIN_ROI', outlines_only=True, default_color='black')
+                    self.entry_layout.addWidget(widget)
+                    self.entry_widgets.append(widget)
+                if 'SUB' in suffix:
+                    widget = OverlayEntryWidget(os.path.join(d, f), 'SUB_ROI', outlines_only=True, default_color='gray')
+                    self.entry_layout.addWidget(widget)
+                    self.entry_widgets.append(widget)
+                if 'IGNORE' in suffix:
+                    widget = OverlayEntryWidget(os.path.join(d, f), 'IGNORE_ROI', outlines_only=True, default_color='black')
+                    self.entry_layout.addWidget(widget)
+                    self.entry_widgets.append(widget)
+
+    def set_measurements(self, d):
+        self.measurements = []
+        for measurement_d in sorted(os.listdir(d)):
+            if os.path.isdir(os.path.join(d, measurement_d)):
+                self.measurements.append(measurement_d)
+
+        try:
+            self.measurements_widget.currentTextChanged.disconnect()
+        except:
+            pass
+        self.measurements_widget.clear()
+        self.measurements_widget.addItems(self.measurements)
+        self.measurements_widget.currentTextChanged.connect(self.update_overlay_entries_wrapper)
+
+    # TODO: support soma centers
+    # TODO: support grayscale?
+    def set_overlay_entries(self, d, measurement):
 
         # find the files
         overlay_files = []
-        for f in os.listdir(d):
-            if f.endswith('.dat.npz'):
-                for suffix in self.VALID_SUFFIXES:
-                    if suffix in f:
-                        overlay_files.append((suffix, f))
-                        break
-            
+        for f in os.listdir(os.path.join(d, measurement)):
+            if f.endswith('.npz'):
+                suffix = pdnl_io.get_slide_suffix(f)
+                overlay_files.append((suffix, f))
+
         # create the widgets
         for suffix, f in overlay_files:
-            widget = OverlayEntryWidget(os.path.join(d, f), suffix)
+            widget = OverlayEntryWidget(os.path.join(d, measurement, f), suffix)
             self.entry_layout.addWidget(widget)
             self.entry_widgets.append(widget)
 
-    def update_overlay_entries(self, d):
-     
-        # find main masks if available
+    # TODO: eventually merge set and update after upgrading the functions
+    def update_entries(self, d):
+        self.d = d
+        self.set_roi_entries(d)
+        self.set_measurements(d)
+        self.set_overlay_entries(d, self.measurements[1])
+        # self.update_roi_entries(d)
+        # self.set_measurements(d)
+        # self.update_overlay_entries(d, self.measurements[0])
+    
+    # TODO: delete entries that don't amtch
+    # TODO: add entries that don't already exist
+    def update_roi_entries(self, d):
         for f in os.listdir(d):
-            if '_MAIN_' in f and not '_DEFORM_' in f and f.endswith('.dat.npz'):
-                for widget in self.entry_widgets:
-                    if widget.get_label() == 'MAIN_ROI':
-                        widget.load_frame(os.path.join(d, f))
-                        break
-                break
+            if f.endswith('.npz'):
+                suffix = pdnl_io.get_slide_suffix(f)
+                if 'MAIN' in suffix:
+                    for widget in self.entry_widgets:
+                        if widget.get_label() == 'MAIN_ROI':
+                            widget.load_frame(os.path.join(d, f))
+                            break
+                if 'SUB' in suffix:
+                    for widget in self.entry_widgets:
+                        if widget.get_label() == 'SUB_ROI':
+                            widget.load_frame(os.path.join(d, f))
+                            break
+                if 'IGNORE' in suffix:
+                    for widget in self.entry_widgets:
+                        if widget.get_label() == 'IGNORE_ROI':
+                            widget.load_frame(os.path.join(d, f))
+                            break
+            # TODO: delete entries that don't match
 
-        # find the files
-        overlay_files = []
-        for f in os.listdir(d):
-            if f.endswith('.dat.npz'):
-                for suffix in self.VALID_SUFFIXES:
-                    if suffix in f:
-                        for widget in self.entry_widgets:
-                            if widget.get_label() == suffix:
-                                widget.load_frame(os.path.join(d, f))
-                                break
-                        break
+    # TODO: update this once upgraded
+    def update_overlay_entries_wrapper(self, measurement):
+        d = self.d
+        self.set_entries(d, measurement=measurement)
+        # self.update_overlay_entries(d, measurement)
+
+    def update_overlay_entries(self, d, measurement):
+        for f in os.listdir(os.path.join(d, measurement)):
+            if f.endswith('.npz'):
+                suffix = pdnl_io.get_slide_suffix(f)
+                for widget in self.entry_widgets:
+                    print(widget.get_label(), suffix)
+                    if widget.get_label() == suffix:
+                        print('aslkdjffajsdljklfds')
+                        widget.load_frame(os.path.join(d, measurement, f))
+        # TODO: delete entries that don't match
 
 class OverlayEntryWidget(QWidget):
     state_changed = pyqtSignal()

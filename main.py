@@ -2,12 +2,16 @@
 import os
 import sys
 
-from PyQt6.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication
 from ImageViewer import ImageViewer
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    viewer = ImageViewer()
+    if len(sys.argv) > 1:
+        f = sys.argv[1]
+    else:
+        f = None
+    viewer = ImageViewer(f)
     viewer.show()
     sys.exit(app.exec())
 
