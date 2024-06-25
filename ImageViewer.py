@@ -370,9 +370,14 @@ class ImageViewer(QMainWindow):
         for widget in self.overlay_dock.widget.entry_widgets:
             if widget.get_enabled():
                 if widget.outlines_only:
+
+                    # TODO: need to plot all bodies!
+                    # TODO: or just load in the annotations...
+                    if len(widget.bodies) == 0:
+                        continue
                     overlay_frame = overlay_mask(
                         overlay_frame, None,
-                        main_roi=widget.main_roi_bodies[0].polygon,
+                        main_roi=widget.bodies[0].polygon,
                         alpha=widget.get_alpha(),
                         color=widget.get_color(),
                         linewidth=widget.get_linewidth(),
@@ -811,7 +816,7 @@ class ImageViewer(QMainWindow):
         self.overlay_dock.widget.set_entries(self.roi_directory)
         for widget in self.overlay_dock.widget.entry_widgets:
             widget.state_changed.connect(self.update_overlay_image)
-            
+
 
     def update_overlay_image(self):
         overlay_image_array = self.overlay_masks(self.deconvolved_image_array)

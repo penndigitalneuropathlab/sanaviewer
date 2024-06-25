@@ -11,6 +11,8 @@ from sana.image import Frame
 
 import pdnl_io
 
+from matplotlib import pyplot as plt
+
 class OverlayDockWidget(QDockWidget):
     def __init__(self, name=""):
         super().__init__(name)
@@ -50,7 +52,7 @@ class OverlayWidget(QWidget):
         self.set_roi_entries(d)
         if measurement == "":
             self.set_measurements(d)
-            measurement = self.measurements[1]
+            measurement = self.measurements[0]
         self.set_overlay_entries(d, measurement)
 
     def set_roi_entries(self, d):
@@ -73,6 +75,8 @@ class OverlayWidget(QWidget):
     def set_measurements(self, d):
         self.measurements = []
         for measurement_d in sorted(os.listdir(d)):
+            if measurement_d != 'AO':
+                continue
             if os.path.isdir(os.path.join(d, measurement_d)):
                 self.measurements.append(measurement_d)
 
@@ -103,10 +107,10 @@ class OverlayWidget(QWidget):
 
     # TODO: eventually merge set and update after upgrading the functions
     def update_entries(self, d):
-        self.d = d
+        self.d = d 
         self.set_roi_entries(d)
         self.set_measurements(d)
-        self.set_overlay_entries(d, self.measurements[1])
+        self.set_overlay_entries(d, self.measurements[0])
         # self.update_roi_entries(d)
         # self.set_measurements(d)
         # self.update_overlay_entries(d, self.measurements[0])
@@ -151,6 +155,7 @@ class OverlayWidget(QWidget):
                         widget.load_frame(os.path.join(d, measurement, f))
         # TODO: delete entries that don't match
 
+# TODO: needs a up/down arrow that sends a signal to re-order the widgets
 class OverlayEntryWidget(QWidget):
     state_changed = pyqtSignal()
 
@@ -165,7 +170,7 @@ class OverlayEntryWidget(QWidget):
         self.load_frame(filename)
 
         self.checkbox = QCheckBox()
-        if self.outlines_only:
+        if self.outlines_only and False:
             self.checkbox.setChecked(True)
         else:
             self.checkbox.setChecked(False)
@@ -194,7 +199,7 @@ class OverlayEntryWidget(QWidget):
     def load_frame(self, filename):
         self.frame = Frame(filename)
         if self.outlines_only:
-            self.main_roi_bodies, self.main_roi_holes = self.frame.get_contours()
+            self.bodies, self.holes = self.frame.get_contours()
 
     def get_label(self):
         return self.colorpicker.text()
